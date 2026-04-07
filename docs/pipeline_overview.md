@@ -32,7 +32,7 @@ Using these following files:
 * species taxaID list
 * species of interest to genus taxaID table
 * species representative to genus taxaID table
-`availability_check.py` try identify the best available assemblies for each species of interest. The script first identifies species level assemblies for species of interest. For those that do not have any assembly available, it falls back to genus level, then identifies representatives species assemblies within the genus. From all identified assemblies, the one with best quality is selected based on the following hierarchical priority:
+`availability_check.py` tries to identify the best available assemblies for each species of interest. The script first identifies species level assemblies for species of interest. For those that do not have any assembly available, it falls back to genus level, then identifies representatives species assemblies within the genus. From all identified assemblies, the one with best quality is selected based on the following hierarchical priority:
 
 | Priority | Database | Reference Genome | Assembly Level Order                             |
 | -------- | -------- | ---------------- | ------------------------------------------------ |
@@ -40,7 +40,7 @@ Using these following files:
 | 2        | GenBank  | Yes              | Complete genome > Chromosome > Scaffold > Contig |
 | 3        | RefSeq   | No               | Complete genome > Chromosome > Scaffold > Contig |
 
-If none of the standard met or multiple assemblies with the same hierarchy appear for one species, choose the assembly with largest total sequence length. Those with no genome are left blank. Certain species have their subspecies/strains identified under taxonomic IDs different from the original ones, and are also included.  
+If none of the standards are met or multiple assemblies with the same hierarchy appear for one species, choose the assembly with largest total sequence length. Those with no genome are left blank. Certain species have their subspecies/strains identified under taxonomic IDs different from the original ones, and are also included.  
 Outputs are shown in `all_availability.tsv`.  
 
 Genomes are downloaded according to assembly accession using `download_assemblies.sbatch`.  
@@ -53,7 +53,7 @@ To simulate ancient DNA reads from modern assemblies, `aeDNA_simulation.py` is d
 * `--output_dir`: the desired output directory, default current directory
 * `--tile_len`: the length of each tile, default 52bp
 * `--step`: the window sliding step between each tile, default 5bp
-* `--deamination`: adding deamination damage that turns C to T at the firt 3bp of the 5' end of each tiled read
+* `--deamination`: adding deamination damage that turns C to T at the first 3bp of the 5' end of each tiled read
 * `--mutation`: adding 1bp of mutation at the center of the read (e.g. bp 26 for the default 52bp length)
 * `--seed`: setting randomize seed, only when testing
 * `--wrap`: output FASTA file wrapping, suitable for long tiled reads, default 80bp
@@ -71,21 +71,21 @@ find ../data/assemblies/ncbi_dataset/data -type f -name "*_genomic.fna" | sort >
 wc -l assemblies.list
 head assemblies.list
 ``` 
-All 84 assemblies were tiled in parallel using `run_tiling_array.sbatch`.  
+All 81 assemblies were tiled in parallel using `run_tiling_array.sbatch`.  
 Sample tiling output is in `1118155.fasta`.  
 
 **Reassigning Reads with K-mer Based Taxonomic Identification Algorithms - Kraken2**
 
-An existing, wildly adopted taxonomic identification tools, Kraken2, is first used. 
+An existing, widely adopted taxonomic identification tool, Kraken2, is first used. 
 Kraken2 core_nt database is chosen as the reference database for the purpose of this project. Prebuild core_nt database is acquired from Kraken 2 index zone. It is subsequently run using `sbatch_mom2.sh` with the following relevant parameters: 
 ``` 
 kraken2 \
-  --db cort_nt \
+  --db core_nt \
   --threads 48 \
   --confidence 0.2 \
   --report-minimizer-data \
-  --report species_id.c0.2.report.txt" \
-  --output species_id.c0.2.kraken.out" \
+  --report species_id.c0.2.report.txt \
+  --output species_id.c0.2.kraken.out \
 ``` 
 * `--db`: reference database
 * `--threads`: number of cpus exploited
@@ -94,12 +94,6 @@ kraken2 \
 * `--report`: return summary report
 * `--output`: return output
 Sample Kraken2 output can be found in `kraken2_sample_output`.  
-
-To evaluate the best confidence threshold, 4 different values (0, 0.05, 0.1, 0.2) are tested on 10 sample species selected to represent the diversity of glacial retreat taxa composition.  The resulting kraken2 outputs are compared on their sensitivity (percentage of correctly assigned reads out of all reads) and precision (percentage of correctly assigned reads out of all classified reads) using f1 score calculated in `kraken_eval.py`. It accepts the following arguments:
-* `--results_dir`: directory containing Kraken2 `.out` files
-* `--nodes`: path to `nodes.dmp` from the Kraken2 database taxonomy
-* `--out`: output CSV file path, default to `kraken_eval.csv`
-The 10 sample species can be found in `sample_10_species.txt`, with evaluation results in `kraken_eval.csv`. For this speicfic project, the most ideal confidence threshold have been identified as 0.05 and is adopted for further processing.  
 
 The Kraken2 outputs are then filtered using `kraken_filter.py`, which produces two output files per input:
 1. `correct_genus.out`: reads classified at genus level or below where the assigned genus matches the true genus encoded in the read name
@@ -133,13 +127,15 @@ bowtie2 -p 16 -k 100 -x core_nt.00 -f -U species.fasta --no-unal 2> logfile | sa
 * `-b` (samtools): output in BAM format
 * `-o` (samtools): output file path
 
-After bowtie2 alignment, the output BAM files are merged and name-sorted with `bamsort.sbatch`. For species with larger read volumes, `bamsort.sbatch` fails due to hard header size limit or out of memory issue. `bamsort_merge_sam.sbatch` is used for these species instead, replacing `samtools sort` with GNU `sort`, which operates on plain text, does not pre-allocate a fixed buffer, and spills to disk freely, and avoid header issue by writing it directly to the output stream, passing only alignment lines through `sort`.  
+After bowtie2 alignment, the output BAM files are merged and name-sorted with `bamsort.sbatch`. For species with larger read volumes, `bamsort.sbatch` fails due to hard header size limit or out of memory issue. `bamsort_merge_sam.sbatch` is used for these species instead, replacing `samtools sort` with GNU `sort`, which operates on plain text, does not pre-allocate a fixed buffer, and spills to disk freely, and avoids header issue by writing it directly to the output stream, passing only alignment lines through `sort`.  
 
 For species with exceptionally large intermediate tmp files, a two-phase approach is further used. `bamsort_presort.sbatch` first namesorts each bowtie2 shard BAM independently into SAM.gz, `bamsort_merge_presorted.sbatch` then performs a streaming merge with `sort -m` and splits the merged output into multiple chunks as these typically produce large outputs and would risk hitting downstream wall time if output as a single file.  
 
 For species that completed `bamsort_merge_sam.sbatch` successfully but hit downstream ngsLCA wall time limit, `bamsort_split.sbatch` is used to retroactively split the existing merged sorted SAM.gz into `*.chunkNN.sorted.sam.gz` files at read-name boundaries.  
 
 As an alternative to the GNU sort approach, the BAM headers of all alignment outputs can first be compressed using `compressbam.sbatch`, which remove the header lines that are not referred to in the alignment. The compressed shards are then merged, queryname-sorted, and split into 4 chunk BAMs using `bamsort_compressed.sbatch`.  
+
+Target species 223866, Artemisia genipi, lacks a species-level assembly and is represented by representative species 259893, Artemisia argyi, generate unexpectedly high amount of alignments. Search through literature reveal that its genome is highly repetitive (81.03% of repetitive rate), mainly due to high transposable element level, widespread gene duplication, and a recent whole-genome duplication events (Chen et al., 2023). This substantial redundancy results in inflated alignment counts, and is thus excluded from downstream analysis.  
 
 ngsLCA is then run on the sorted files with `ngslca.sbatch`, which prioritises chunk files over any full-length file for the same species. Because the bowtie2 reference database was converted from the Kraken2 core_nt database, taxonomy files from Kraken2 are used directly: `nodes.dmp`, `names.dmp`, and `seqid2taxid.map`. `seqid2taxid.map` uses a Kraken2-specific key format (`kraken:taxid|TAXID|ACCESSION`) that does not match the bare accession names in the SAM RNAME field. It is therefore converted to a 4-column NCBI acc2tax format by stripping the prefix:
 ```
@@ -169,7 +165,7 @@ ngsLCA \
 
 Each chunk file is processed as a separate SLURM array task, producing a corresponding `species_id_chunkNN.lca` file. For species that completed ngsLCA as a single full file but whose SAM was later split into chunks with `bamsort_split.sbatch`, `lca_split.sbatch` can retroactively split the full LCA to match the SAM chunk boundaries by scanning chunk SAM to find its first read name, building a boundary list for dividing LCA sequentially. This ensures the split is robust even when a read is absent from the LCA due to ngsLCA filtering.  
 
-Bamdam is then run on the ngsLCA outputs with `bamdam.sbatch` to filter the BAM and LCA files down to reads assigned at genus level or below. When both a full LCA and chunk LCAs exist for the same species. only the chunk LCAs are processed. An example command with relevant parameters is:
+Bamdam is then run on the ngsLCA outputs with `bamdam.sbatch` to filter the BAM and LCA files down to reads assigned at genus level or below. When both a full LCA and chunk LCAs exist for the same species, only the chunk LCAs are processed. An example command with relevant parameters is:
 ```
 bamdam shrink \
     --in_bam species_id.merged.sorted.bam \
@@ -196,7 +192,7 @@ The shrunk LCA files are then further filtered using `bamdam_filter.py`, which p
 
 **Database Coverage Check**
 
-As the presence or absence of targeted or representative species assmebly in the database may affect the performance of both pipelines, to assess their corresponding performance under different level of database coverage, species that have any genetic assembly in the database is identified. This is done using `check_db_coverage.py`, which first checks for the list of representative species taxid by referring to `all_availability.tsv` and `genus_metadata.tsv`: 
+As the presence or absence of targeted or representative species assembly in the database may affect the performance of both pipelines, to assess their corresponding performance under different level of database coverage, species that have any genetic assembly in the database are identified. This is done using `check_db_coverage.py`, which first checks for the list of representative species taxid by referring to `all_availability.tsv` and `genus_metadata.tsv`: 
 ```
 python3 check_db_coverage.py \
   --all_avail data/all_availability.tsv \
@@ -238,7 +234,7 @@ To enable a direct comparison between simulated damaged aeDNA reads and undamage
 ```
 python3 aeDNA_simulation.py \
   --assembly assembly_accession_genomic.fna \
-  --metadata all_availability2.tsv \
+  --metadata all_availability.tsv \
 ```
 
 **Biophysical Filter**
@@ -336,7 +332,7 @@ Read count comparisons across pipeline stages for the 7 species are produced by 
 * `--cache`: TSV cache file for NCBI taxonomy lookups, default `data/taxonomy_cache.tsv`
 Output figure can be seen at `taxonomy_availability_{rank}.png`.  
 
-`probe_funnel_plot.py` produces a Sankey-style funnel plot showing read count changes across the four probe design stages: eprobe input, epobre biophysical filter, shuffle with subsampling, and CD-HIT deduplication. Each bar represents 100% of reads entering that stage, with the coloured portion showing what fraction is retained and the grey portion showing what is dropped. Percentages of read kept are computed relative to the previous stage, with absolute read counts shown above each bar. It accepts the following arguments:
+`probe_funnel_plot.py` produces a Sankey-style funnel plot showing read count changes across the four probe design stages: eprobe input, eprobe biophysical filter, shuffle with subsampling, and CD-HIT deduplication. Each bar represents 100% of reads entering that stage, with the coloured portion showing what fraction is retained and the grey portion showing what is dropped. Percentages of read kept are computed relative to the previous stage, with absolute read counts shown above each bar. It accepts the following arguments:
 * `--summary`: path to `eprobe_summary.csv`
 * `--plan`: path to `subsample_plan.csv`
 * `--post_dedup`: read count after CD-HIT deduplication (integer)
@@ -377,7 +373,7 @@ Output figure can be seen at `correct_rate_correlation_compressed.png`.
 
 **Declaration of AI Usage**
 
-All sbatch scripts are written with Claude Code Sonnet 4.6, then proofread and annotated by me, except `sbatch_mom2.sh`, which is provided by Prof. Anton Enright, CGS, Department of Pathology, University of Cambridge.  
+All SLURM batch scripts are written with Claude Code Sonnet 4.6, then proofread and annotated by me, except `sbatch_mom2.sh`, which is provided by Prof. Anton Enright, CGS, Department of Pathology, University of Cambridge.  
 
 Python scripts written and annotated by me, debug with ChatGPT or Claude Code Sonnet 4.6:
 ```
@@ -395,3 +391,21 @@ pipeline_visualize_compressed.py (based on pipeline_visualize.py)
 pipeline_compare_compressed.py (based on pipeline_compare.py)
 ```
 The rest of the python scripts are written with Claude Code Sonnet 4.6, then proofread and annotated by me. 
+
+**References**
+
+- NCBI
+Sayers et al. (2026). Database resources of the National Center for Biotechnology Information. https://doi.org/10.1093/nar/gkaf1060
+- Kraken 2
+Wood, D.E., Lu, J. and Langmead, B. (2019). Improved metagenomic analysis with Kraken 2. Genome Biology, 20, 257. https://doi.org/10.1186/s13059-019-1891-0
+- Bowtie 2
+Langmead, B. and Salzberg, S.L. (2012). Fast gapped-read alignment with Bowtie 2. Nature Methods, 9(4), pp.357–359. https://doi.org/10.1038/nmeth.1923
+- SAMtools
+Danecek, P. et al. (2021). Twelve years of SAMtools and BCFtools. GigaScience, 10(2), giab008. https://doi.org/10.1093/gigascience/giab008
+- ngsLCA
+Wang et al. (2022). ngsLCA: A toolkit for fast and flexible lowest common ancestor inference and taxonomic profiling of metagenomic data. 
+https://doi.org/10.1111/2041-210X.14006
+- CD-HIT
+Li, W. and Godzik, A. (2006). Cd-hit: a fast program for clustering and comparing large sets of protein or nucleotide sequences. Bioinformatics, 22(13), pp.1658–1659. https://doi.org/10.1093/bioinformatics/btl158
+- Chen et al. (2023). A chromosome-scale genome assembly of Artemisia argyi. 
+https://doi.org/10.1016/j.xplc.2023.100516
