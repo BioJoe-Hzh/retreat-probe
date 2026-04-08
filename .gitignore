@@ -12,9 +12,13 @@
 .idea/
 
 # Large local data / sequencing files
-/data/
 *.fasta
 *.fna
 *.fastq
 *.fq
 *.gz
+
+# Keep repository data tracked, but continue ignoring Finder metadata inside it
+!/data/
+!/data/**
+/data/**/.DS_Store
